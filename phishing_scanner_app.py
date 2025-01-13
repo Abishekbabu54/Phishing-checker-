@@ -13,44 +13,8 @@ from tkinter import messagebox, scrolledtext
 
 
 class PhishingScanner:
-    def __init__(self):
-        self.suspicious_terms = {
-            'login', 'signin', 'verify', 'secure', 'account', 'update', 'banking',
-            'confirm', 'paypal', 'password', 'credential', 'bitcoin', 'wallet',
-            'authenticate', 'validation', 'session', 'recover', 'unlock'
-        }
-        self.legitimate_tlds = {
-            '.com', '.org', '.edu', '.gov', '.net', '.mil', '.int', '.eu',
-            '.us', '.uk', '.ca', '.au', '.de', '.fr', '.jp'
-        }
-        self.dns_resolver = dns.resolver.Resolver()
-        self.dns_resolver.timeout = 3
-        self.dns_resolver.lifetime = 3
-
-    def calculate_domain_age(self, domain_name):
-        try:
-            # Fetch WHOIS information
-            domain_info = whois.whois(domain_name)
-
-            # Extract the creation date
-            creation_date = domain_info.creation_date
-
-            # Handle cases where the creation date might be a list
-            if isinstance(creation_date, list):
-                creation_date = creation_date[0]
-
-            # Ensure creation_date is valid
-            if not creation_date:
-                return None, "Unable to retrieve creation date"
-
-            # Calculate the difference
-            current_date = datetime.now()
-            domain_age_days = (current_date - creation_date).days
-
-            # Return age in days
-            return domain_age_days, None
-        except Exception as e:
-            return None, f"Error calculating domain age: {str(e)}"
+    suspicious_terms = ['login', 'secure', 'account', 'update', 'verify']
+    legitimate_tlds = ['com', 'org', 'net', 'gov', 'edu']
 
     def analyze_url(self, url: str) -> dict:
         results = {
@@ -75,6 +39,27 @@ class PhishingScanner:
             extracted_info = tldextract.extract(url)
             domain = f"{extracted_info.domain}.{extracted_info.suffix}"
 
+            # Check HTTPS
+            if not url.startswith('https://'):
+                results['risks'].append('Not using HTTPS encryption')
+                results['risk_score'] += 20
+                results['recommendations'].append('Use HTTPS for secure connections')
+
+            # Check for suspicious terms in domain name
+            domain_parts = extracted_info.domain.lower().split('-')
+            found_terms = [term for term in self.suspicious_terms if any(term in part for part in domain_parts)]
+            
+            if found_terms:
+                results['risks'].append(f"Domain contains suspicious terms: {', '.join(found_terms)}")
+                results['risk_score'] += len(found_terms) * 10
+                results['recommendations'].append("Domain name contains terms commonly used in phishing")
+
+            # Check for hyphens in domain (common in phishing URLs)
+            if '-' in extracted_info.domain:
+                results['risks'].append('Domain contains hyphens')
+                results['risk_score'] += 15
+                results['recommendations'].append('Multiple hyphens in domain names are common in phishing URLs')
+
             # Check domain age
             domain_age_days, error = self.calculate_domain_age(domain)
             if domain_age_days is not None:
@@ -84,10 +69,33 @@ class PhishingScanner:
                     results['risk_score'] += 25
                     results['recommendations'].append("Be cautious of newly registered domains")
             else:
-                results['risks'].append(error or "Unable to verify domain age")
+                results['risks'].append("Unable to verify domain age")
                 results['risk_score'] += 15
+                results['recommendations'].append("Domain age verification failed - exercise caution")
 
-            # Other analysis (e.g., HTTPS, SSL, DNS records) can be added here.
+            # Check TLD
+            if not any(domain.endswith(tld) for tld in self.legitimate_tlds):
+                results['risks'].append('Unusual domain ending')
+                results['risk_score'] += 15
+                results['recommendations'].append('Verify legitimacy of unusual TLDs')
+
+            # If example.com, add warning
+            if 'example.com' in domain:
+                results['risks'].append('Using example.com domain - likely a test or fake URL')
+                results['risk_score'] += 50
+                results['recommendations'].append('This appears to be a test/example URL')
+
+            # Calculate final risk level
+            results['risk_level'] = (
+                'Critical' if results['risk_score'] >= 80 else
+                'High' if results['risk_score'] >= 60 else
+                'Medium' if results['risk_score'] >= 30 else
+                'Low'
+            )
+
+            # If no risks found but suspicious patterns exist
+            if not results['risks']:
+                results['risks'].append('No immediate risks detected')
 
         except Exception as e:
             results['risks'].append(f"Error during analysis: {str(e)}")
@@ -95,15 +103,18 @@ class PhishingScanner:
             results['risk_level'] = 'Error'
             results['recommendations'].append('Unable to complete full analysis')
 
-        # Calculate final risk level
-        results['risk_level'] = (
-            'Critical' if results['risk_score'] >= 80 else
-            'High' if results['risk_score'] >= 60 else
-            'Medium' if results['risk_score'] >= 30 else
-            'Low'
-        )
-
         return results
+
+    def calculate_domain_age(self, domain: str) -> tuple:
+        try:
+            whois_info = whois.whois(domain)
+            creation_date = whois_info.creation_date
+            if isinstance(creation_date, list):
+                creation_date = creation_date[0]
+            age_days = (datetime.now() - creation_date).days
+            return age_days, None
+        except Exception as e:
+            return None, str(e)
 
 
 class App:
